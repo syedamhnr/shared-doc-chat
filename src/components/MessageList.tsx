@@ -1,8 +1,7 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Message, Citation } from "@/hooks/useChat";
 import { cn } from "@/lib/utils";
-import { Bot, User, ChevronDown, ChevronUp, TableIcon } from "lucide-react";
-import { useState } from "react";
+import { Bot, User, ChevronDown, ChevronUp, TableIcon, Copy, Check } from "lucide-react";
 
 interface CitationCardProps {
   citation: Citation;
@@ -55,6 +54,35 @@ function AssistantContent({ content }: { content: string }) {
   );
 }
 
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      title={copied ? "Copied!" : "Copy to clipboard"}
+      className={cn(
+        "flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium transition-all",
+        "text-muted-foreground hover:bg-muted hover:text-foreground",
+        copied && "text-primary"
+      )}
+    >
+      {copied
+        ? <Check className="h-3.5 w-3.5" />
+        : <Copy className="h-3.5 w-3.5" />}
+      <span className="opacity-0 group-hover:opacity-100 transition-opacity">
+        {copied ? "Copied" : "Copy"}
+      </span>
+    </button>
+  );
+}
+
 function MessageBubble({ message }: { message: Message }) {
   const isUser = message.role === "user";
 
@@ -89,6 +117,14 @@ function MessageBubble({ message }: { message: Message }) {
             : <AssistantContent content={message.content} />}
         </div>
 
+        {/* Bottom row: copy button (assistant only) + timestamp */}
+        <div className={cn("flex items-center gap-1 px-1", isUser ? "flex-row-reverse" : "flex-row")}>
+          {!isUser && <CopyButton text={message.content} />}
+          <span className="text-[10px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">
+            {new Date(message.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+          </span>
+        </div>
+
         {/* Citations */}
         {!isUser && message.citations.length > 0 && (
           <div className="w-full space-y-1 px-1">
@@ -100,10 +136,6 @@ function MessageBubble({ message }: { message: Message }) {
             ))}
           </div>
         )}
-
-        <span className="px-1 text-[10px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">
-          {new Date(message.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-        </span>
       </div>
     </div>
   );
