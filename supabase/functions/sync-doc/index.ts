@@ -27,24 +27,12 @@ function parseCsv(text: string): string[][] {
   return rows;
 }
 
-async function embed(text: string, apiKey: string): Promise<number[]> {
-  const res = await fetch("https://ai.gateway.lovable.dev/v1/embeddings", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ model: "openai/text-embedding-3-small", input: text }),
-  });
-  if (!res.ok) throw new Error(`Embedding failed (${res.status}): ${await res.text()}`);
-  const { data } = await res.json();
-  return data[0].embedding as number[];
-}
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const serviceKey  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const anonKey     = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
-  const lovableKey  = Deno.env.get("LOVABLE_API_KEY")!;
 
   const authHeader = req.headers.get("Authorization");
   if (!authHeader) {
@@ -108,10 +96,12 @@ Deno.serve(async (req) => {
     await adminClient.from("rag_chunks").delete().eq("doc_id", DOC_ID);
 
     let indexed = 0;
+    // Insert in batches of 50
+    const batch: object[] = [];
+
     for (let i = 0; i < dataRows.length; i++) {
       const row = dataRows[i];
-      // Skip completely empty rows
-      if (row.every((v) => !v)) continue;
+      if (row.every((v) => !v)) continue; // skip empty rows
 
       // Build text: "Header: Value; Header: Value; …"
       const text = headers
@@ -121,22 +111,31 @@ Deno.serve(async (req) => {
 
       if (!text.trim()) continue;
 
-      const embedding = await embed(text, lovableKey);
-
-      const { error: insertErr } = await adminClient.from("rag_chunks").insert({
+      batch.push({
         doc_id: DOC_ID,
         chunk_index: i,
         content: text,
-        embedding: `[${embedding.join(",")}]`,
+        // No embedding — using full-text search for retrieval
         token_count: Math.ceil(text.length / 4),
         metadata: {
           source: sourceLabel,
-          row_number: i + 2, // 1-based, +1 for header row
+          row_number: i + 2, // 1-based, accounting for header row
           headers,
         },
       });
-      if (insertErr) throw new Error(insertErr.message);
       indexed++;
+
+      if (batch.length === 50) {
+        const { error } = await adminClient.from("rag_chunks").insert([...batch]);
+        if (error) throw new Error(error.message);
+        batch.length = 0;
+      }
+    }
+
+    // Insert remaining
+    if (batch.length > 0) {
+      const { error } = await adminClient.from("rag_chunks").insert([...batch]);
+      if (error) throw new Error(error.message);
     }
 
     await adminClient.from("sync_status").update({
