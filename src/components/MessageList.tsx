@@ -334,7 +334,11 @@ function AssistantContent({
   };
 
   // Pre-process: wrap [Row N] citations so the code renderer catches them
-  const processed = content.replace(/\[Row (\d+)\]/g, "`[Row $1]`");
+  // Add a zero-width space between adjacent pills to prevent markdown from
+  // treating "`[Row 9]``[Row 10]`" as a single code span with an embedded backtick.
+  const processed = content
+    .replace(/\[Row (\d+)\]/g, "`[Row $1]`")
+    .replace(/`(\s*)`/g, "` `");
 
   return (
     <div className="prose-sm prose-neutral max-w-none dark:prose-invert">
