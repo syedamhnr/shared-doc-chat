@@ -66,11 +66,6 @@ function RowPreviewSheet({ citation, onClose }: RowPreviewSheetProps) {
           <div className="flex items-center gap-2">
             <TableIcon className="h-4 w-4 text-primary" />
             <h2 className="text-sm font-semibold">{label}</h2>
-            {citation.similarity !== undefined && (
-              <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                {citation.similarity}% match
-              </span>
-            )}
           </div>
           <button
             onClick={onClose}
@@ -128,11 +123,6 @@ function CitationCard({ citation, onPreview }: CitationCardProps) {
         >
           <TableIcon className="h-3 w-3 text-primary shrink-0" />
           <span className="font-semibold text-primary hover:underline underline-offset-2">{label}</span>
-          {citation.similarity !== undefined && (
-            <span className="rounded bg-primary/10 px-1 py-0.5 text-[10px] text-primary">
-              {citation.similarity}% match
-            </span>
-          )}
         </button>
         <div className="flex items-center gap-2 shrink-0">
           <button
