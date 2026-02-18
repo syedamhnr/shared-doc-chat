@@ -130,13 +130,20 @@ export function useMessages(conversationId: string | null) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversationId]);
 
-  const addMessage = async (role: "user" | "assistant", content: string, citations: Citation[] = [], conversationTitle?: string) => {
-    if (!conversationId || !user) return null;
+  const addMessage = async (
+    role: "user" | "assistant",
+    content: string,
+    citations: Citation[] = [],
+    conversationTitle?: string,
+    overrideConvId?: string,
+  ) => {
+    const convId = overrideConvId ?? conversationId;
+    if (!convId || !user) return null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data } = await supabase
       .from("messages")
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .insert({ conversation_id: conversationId, user_id: user.id, role, content, citations: citations as any })
+      .insert({ conversation_id: convId, user_id: user.id, role, content, citations: citations as any })
       .select()
       .single();
     if (data) {
@@ -149,7 +156,7 @@ export function useMessages(conversationId: string | null) {
     }
     // Update conversation title from first user message
     if (role === "user" && conversationTitle) {
-      await supabase.from("conversations").update({ title: conversationTitle, updated_at: new Date().toISOString() }).eq("id", conversationId);
+      await supabase.from("conversations").update({ title: conversationTitle, updated_at: new Date().toISOString() }).eq("id", convId);
     }
     return data;
   };

@@ -32,12 +32,12 @@ export default function ChatPage() {
     }
 
     // Optimistically add the user message (also sets title)
+    // Pass convId directly to bypass stale React state in the hook
     const titleForConvo = text.length > 50 ? text.slice(0, 50) + "…" : text;
-    await addMessage("user", text, [], messages.length === 0 ? titleForConvo : undefined);
+    await addMessage("user", text, [], messages.length === 0 ? titleForConvo : undefined, convId);
 
     setIsThinking(true);
     try {
-      // Call the /chat edge function (to be built next)
       const { supabase } = await import("@/integrations/supabase/client");
       const { data: { session } } = await supabase.auth.getSession();
 
@@ -59,19 +59,10 @@ export default function ChatPage() {
       }
 
       const { answer, citations } = await res.json();
-      await addMessage("assistant", answer, citations ?? []);
+      await addMessage("assistant", answer, citations ?? [], undefined, convId);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Something went wrong";
-      // Show a friendly placeholder if the edge function hasn't been deployed yet
-      if (msg.includes("404") || msg.includes("Failed to fetch") || msg.includes("function")) {
-        await addMessage(
-          "assistant",
-          "⚙️ The AI backend function hasn't been deployed yet. Build the `/chat` edge function to get real answers!",
-          []
-        );
-      } else {
-        toast({ title: "Error", description: msg, variant: "destructive" });
-      }
+      toast({ title: "Error", description: msg, variant: "destructive" });
     } finally {
       setIsThinking(false);
     }
