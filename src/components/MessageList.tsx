@@ -141,20 +141,19 @@ function CitationCard({ citation, onPreview }: CitationCardProps) {
         </div>
       </div>
       {open && (() => {
-        const pairs = parseExcerpt(citation.excerpt);
-        const first = pairs[0];
+        // The excerpt starts with the raw query (no "Key: " prefix), followed by
+        // semicolon-separated "Key: Value" fields. Extract just the first segment.
+        const firstSegment = citation.excerpt.split(";")[0].trim();
+        const colonIdx = firstSegment.indexOf(":");
+        // If the first segment has no colon it's a raw value (the SQL query itself)
+        const displayText = colonIdx === -1
+          ? firstSegment
+          : firstSegment.slice(colonIdx + 1).trim();
         return (
           <div className="border-t border-border/40 px-3 pb-2 pt-1.5">
-            {first ? (
-              <p className="font-mono text-[11px] leading-relaxed text-muted-foreground">
-                <span className="font-semibold text-foreground/60">{first.key}: </span>
-                {first.value}
-              </p>
-            ) : (
-              <p className="font-mono text-[11px] leading-relaxed text-muted-foreground">
-                {citation.excerpt}
-              </p>
-            )}
+            <p className="font-mono text-[11px] leading-relaxed text-muted-foreground break-all">
+              {displayText}
+            </p>
           </div>
         );
       })()}
