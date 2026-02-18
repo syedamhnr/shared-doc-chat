@@ -150,11 +150,24 @@ function CitationCard({ citation, onPreview }: CitationCardProps) {
           </button>
         </div>
       </div>
-      {open && (
-        <p className="border-t border-border/40 px-3 pb-2 pt-1.5 font-mono text-[11px] leading-relaxed text-muted-foreground">
-          {citation.excerpt}
-        </p>
-      )}
+      {open && (() => {
+        const pairs = parseExcerpt(citation.excerpt);
+        const first = pairs[0];
+        return (
+          <div className="border-t border-border/40 px-3 pb-2 pt-1.5">
+            {first ? (
+              <p className="font-mono text-[11px] leading-relaxed text-muted-foreground">
+                <span className="font-semibold text-foreground/60">{first.key}: </span>
+                {first.value}
+              </p>
+            ) : (
+              <p className="font-mono text-[11px] leading-relaxed text-muted-foreground">
+                {citation.excerpt}
+              </p>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }
