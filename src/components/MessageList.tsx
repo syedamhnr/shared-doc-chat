@@ -299,19 +299,31 @@ function MessageBubble({ message }: { message: Message }) {
 interface MessageListProps {
   messages: Message[];
   isThinking: boolean;
+  /** Token-by-token content being streamed right now */
+  streamingContent?: string;
+  streamingCitations?: Citation[];
+  isStreaming?: boolean;
 }
 
-export function MessageList({ messages, isThinking }: MessageListProps) {
+export function MessageList({
+  messages,
+  isThinking,
+  streamingContent = "",
+  streamingCitations = [],
+  isStreaming = false,
+}: MessageListProps) {
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isThinking]);
+  }, [messages, isThinking, streamingContent]);
+
+  const showEmpty = messages.length === 0 && !isThinking && !isStreaming;
 
   return (
     <div className="chat-scroll flex-1 overflow-y-auto">
       <div className="mx-auto max-w-2xl space-y-6 px-4 py-8">
-        {messages.length === 0 && !isThinking && (
+        {showEmpty && (
           <div className="flex flex-col items-center justify-center py-24 text-center">
             <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
               <Bot className="h-8 w-8 text-primary" />
@@ -327,7 +339,51 @@ export function MessageList({ messages, isThinking }: MessageListProps) {
           <MessageBubble key={m.id} message={m} />
         ))}
 
-        {isThinking && (
+        {/* Live streaming bubble */}
+        {isStreaming && (
+          <div className="group flex gap-3">
+            <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-card">
+              <Bot className="h-4 w-4 text-foreground" />
+            </div>
+            <div className="flex max-w-[78%] flex-col gap-1">
+              <div className="rounded-2xl rounded-tl-sm border border-border bg-card px-4 py-3 text-card-foreground">
+                {streamingContent ? (
+                  <>
+                    <AssistantContent content={streamingContent} />
+                    {/* Blinking cursor */}
+                    <span className="inline-block h-4 w-0.5 translate-y-0.5 animate-pulse bg-foreground/60 ml-0.5" />
+                  </>
+                ) : (
+                  /* Thinking dots while waiting for first token */
+                  <div className="flex h-5 items-center gap-1.5">
+                    {[0, 1, 2].map((i) => (
+                      <span
+                        key={i}
+                        className="h-2 w-2 rounded-full bg-muted-foreground/50 animate-bounce"
+                        style={{ animationDelay: `${i * 0.15}s` }}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Citations preview while streaming */}
+              {streamingCitations.length > 0 && (
+                <div className="w-full space-y-1 px-1">
+                  <p className="px-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Retrieved rows
+                  </p>
+                  {streamingCitations.map((c, i) => (
+                    <CitationCard key={c.chunk_id ?? i} citation={c} />
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Legacy thinking indicator (kept for safety) */}
+        {isThinking && !isStreaming && (
           <div className="flex gap-3">
             <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-card">
               <Bot className="h-4 w-4 text-foreground" />
@@ -351,3 +407,4 @@ export function MessageList({ messages, isThinking }: MessageListProps) {
     </div>
   );
 }
+
