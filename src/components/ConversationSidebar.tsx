@@ -26,6 +26,8 @@ import {
   ShieldCheck,
   LogOut,
   User,
+  Search,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -43,6 +45,13 @@ export function ConversationSidebar({
   const { user, isAdmin, signOut } = useAuth();
   const { conversations, deleteConversation } = useConversations();
   const navigate = useNavigate();
+  const [search, setSearch] = useState("");
+
+  const filtered = search.trim()
+    ? conversations.filter((c) =>
+        (c.title ?? "").toLowerCase().includes(search.toLowerCase())
+      )
+    : conversations;
 
   const groupByDate = (convos: Conversation[]) => {
     const today: Conversation[] = [];
@@ -60,7 +69,7 @@ export function ConversationSidebar({
     return { today, week, older };
   };
 
-  const { today, week, older } = groupByDate(conversations);
+  const { today, week, older } = groupByDate(filtered);
 
   const ConvoGroup = ({ label, items }: { label: string; items: Conversation[] }) => {
     if (!items.length) return null;
@@ -130,13 +139,31 @@ export function ConversationSidebar({
         </div>
       </SidebarHeader>
 
+      {/* Search bar */}
+      <div className="border-b border-sidebar-border px-3 py-2">
+        <div className="flex items-center gap-2 rounded-md border border-sidebar-border bg-sidebar-accent/30 px-2.5 py-1.5">
+          <Search className="h-3.5 w-3.5 shrink-0 text-sidebar-foreground/50" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search conversations…"
+            className="min-w-0 flex-1 bg-transparent text-xs text-sidebar-foreground placeholder:text-sidebar-foreground/40 outline-none"
+          />
+          {search && (
+            <button onClick={() => setSearch("")} className="text-sidebar-foreground/50 hover:text-sidebar-foreground">
+              <X className="h-3 w-3" />
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* Conversations list */}
       <SidebarContent className="chat-scroll overflow-y-auto px-2 py-3">
         <SidebarMenu>
-          {conversations.length === 0 && (
+          {filtered.length === 0 && (
             <p className="px-3 py-8 text-center text-xs text-sidebar-foreground/50">
-              No conversations yet.
-              <br />Start a new one!
+              {search ? "No conversations match your search." : <>No conversations yet.<br />Start a new one!</>}
             </p>
           )}
           <ConvoGroup label="Today" items={today} />
