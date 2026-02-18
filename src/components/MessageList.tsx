@@ -2,6 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { Message, Citation } from "@/hooks/useChat";
 import { cn } from "@/lib/utils";
 import { Bot, User, ChevronDown, ChevronUp, TableIcon, Copy, Check } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import type { Components } from "react-markdown";
 
 interface CitationCardProps {
   citation: Citation;
@@ -36,21 +41,171 @@ function CitationCard({ citation }: CitationCardProps) {
 }
 
 function AssistantContent({ content }: { content: string }) {
-  // Render with basic formatting — bold **text**, inline code, newlines
-  const parts = content.split(/(\[Row \d+\])/g);
+  const components: Components = {
+    // Paragraphs
+    p({ children }) {
+      return <p className="mb-3 last:mb-0 text-sm leading-relaxed">{children}</p>;
+    },
+    // Headings
+    h1({ children }) {
+      return <h1 className="mb-3 mt-4 text-lg font-bold first:mt-0">{children}</h1>;
+    },
+    h2({ children }) {
+      return <h2 className="mb-2 mt-4 text-base font-semibold first:mt-0">{children}</h2>;
+    },
+    h3({ children }) {
+      return <h3 className="mb-2 mt-3 text-sm font-semibold first:mt-0">{children}</h3>;
+    },
+    // Lists
+    ul({ children }) {
+      return <ul className="mb-3 ml-4 list-disc space-y-1 text-sm last:mb-0">{children}</ul>;
+    },
+    ol({ children }) {
+      return <ol className="mb-3 ml-4 list-decimal space-y-1 text-sm last:mb-0">{children}</ol>;
+    },
+    li({ children }) {
+      return <li className="leading-relaxed">{children}</li>;
+    },
+    // Blockquote
+    blockquote({ children }) {
+      return (
+        <blockquote className="mb-3 border-l-2 border-primary/40 pl-3 text-sm italic text-muted-foreground last:mb-0">
+          {children}
+        </blockquote>
+      );
+    },
+    // Horizontal rule
+    hr() {
+      return <hr className="my-3 border-border" />;
+    },
+    // Strong / em
+    strong({ children }) {
+      return <strong className="font-semibold text-foreground">{children}</strong>;
+    },
+    em({ children }) {
+      return <em className="italic">{children}</em>;
+    },
+    // Tables (GFM)
+    table({ children }) {
+      return (
+        <div className="mb-3 overflow-x-auto rounded-lg border border-border last:mb-0">
+          <table className="w-full text-sm">{children}</table>
+        </div>
+      );
+    },
+    thead({ children }) {
+      return <thead className="bg-muted/50">{children}</thead>;
+    },
+    tr({ children }) {
+      return <tr className="border-b border-border/50 last:border-0">{children}</tr>;
+    },
+    th({ children }) {
+      return <th className="px-3 py-2 text-left font-medium text-foreground">{children}</th>;
+    },
+    td({ children }) {
+      return <td className="px-3 py-2 text-muted-foreground">{children}</td>;
+    },
+    // Links
+    a({ href, children }) {
+      return (
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-primary underline underline-offset-2 hover:text-primary/80"
+        >
+          {children}
+        </a>
+      );
+    },
+    // Inline code
+    code({ className, children, ...props }) {
+      const match = /language-(\w+)/.exec(className ?? "");
+      const isBlock = Boolean(match);
+      const codeString = String(children).replace(/\n$/, "");
+
+      // Citation pill: [Row N]
+      if (!isBlock && /^\[Row \d+\]$/.test(codeString)) {
+        return (
+          <span className="rounded bg-primary/15 px-1 py-0.5 text-xs font-semibold text-primary">
+            {codeString}
+          </span>
+        );
+      }
+
+      if (isBlock) {
+        return (
+          <div className="mb-3 overflow-hidden rounded-lg border border-border last:mb-0">
+            <div className="flex items-center justify-between border-b border-border bg-muted/60 px-3 py-1.5">
+              <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                {match![1]}
+              </span>
+              <CodeCopyButton code={codeString} />
+            </div>
+            <SyntaxHighlighter
+              style={oneDark}
+              language={match![1]}
+              PreTag="div"
+              customStyle={{
+                margin: 0,
+                borderRadius: 0,
+                fontSize: "0.78rem",
+                lineHeight: "1.6",
+                padding: "1rem",
+                background: "hsl(var(--card))",
+              }}
+              codeTagProps={{ style: { fontFamily: "var(--font-mono, monospace)" } }}
+            >
+              {codeString}
+            </SyntaxHighlighter>
+          </div>
+        );
+      }
+
+      // Inline code
+      return (
+        <code
+          className="rounded bg-muted px-1.5 py-0.5 font-mono text-[0.8em] text-foreground"
+          {...props}
+        >
+          {children}
+        </code>
+      );
+    },
+  };
+
+  // Pre-process: highlight [Row N] citations not wrapped in backticks
+  const processed = content.replace(/\[Row (\d+)\]/g, "`[Row $1]`");
+
   return (
-    <p className="text-sm leading-relaxed whitespace-pre-wrap">
-      {parts.map((part, i) => {
-        if (/^\[Row \d+\]$/.test(part)) {
-          return (
-            <span key={i} className="rounded bg-primary/15 px-1 py-0.5 text-xs font-semibold text-primary">
-              {part}
-            </span>
-          );
-        }
-        return <span key={i}>{part}</span>;
-      })}
-    </p>
+    <div className="prose-sm prose-neutral max-w-none dark:prose-invert">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+        {processed}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
+function CodeCopyButton({ code }: { code: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  return (
+    <button
+      onClick={handleCopy}
+      title={copied ? "Copied!" : "Copy code"}
+      className={cn(
+        "flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium transition-all",
+        "text-muted-foreground hover:text-foreground",
+        copied && "text-primary"
+      )}
+    >
+      {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+      {copied ? "Copied" : "Copy"}
+    </button>
   );
 }
 
