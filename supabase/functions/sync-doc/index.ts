@@ -2,167 +2,159 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// ~500 token chunks (~2000 chars) with 200-char overlap
-function chunkText(text: string, chunkSize = 2000, overlap = 200): string[] {
-  const chunks: string[] = [];
-  let start = 0;
-  while (start < text.length) {
-    const end = Math.min(start + chunkSize, text.length);
-    chunks.push(text.slice(start, end).trim());
-    if (end === text.length) break;
-    start += chunkSize - overlap;
+/** Minimal RFC 4180-compliant CSV parser */
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const cells: string[] = [];
+    let cur = "", inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQ && line[i + 1] === '"') { cur += '"'; i++; }
+        else inQ = !inQ;
+      } else if (ch === "," && !inQ) { cells.push(cur); cur = ""; }
+      else cur += ch;
+    }
+    cells.push(cur);
+    rows.push(cells.map((c) => c.trim().replace(/^"|"$/g, "")));
   }
-  return chunks.filter((c) => c.length > 0);
+  return rows;
 }
 
 async function embed(text: string, apiKey: string): Promise<number[]> {
   const res = await fetch("https://ai.gateway.lovable.dev/v1/embeddings", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: "openai/text-embedding-3-small",
-      input: text,
-    }),
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ model: "openai/text-embedding-3-small", input: text }),
   });
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Embedding failed: ${err}`);
-  }
+  if (!res.ok) throw new Error(`Embedding failed (${res.status}): ${await res.text()}`);
   const { data } = await res.json();
   return data[0].embedding as number[];
 }
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const lovableApiKey = Deno.env.get("LOVABLE_API_KEY")!;
-  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+  const serviceKey  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const anonKey     = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+  const lovableKey  = Deno.env.get("LOVABLE_API_KEY")!;
 
-  // Verify auth
   const authHeader = req.headers.get("Authorization");
   if (!authHeader) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), {
-      status: 401,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 
+  // Verify user
   const userClient = createClient(supabaseUrl, anonKey, {
     global: { headers: { Authorization: authHeader } },
   });
-
-  const { data: { user }, error: authError } = await userClient.auth.getUser();
-  if (authError || !user) {
+  const { data: { user }, error: authErr } = await userClient.auth.getUser();
+  if (authErr || !user) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), {
-      status: 401,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 
-  // Check admin role
+  // Verify admin
   const adminClient = createClient(supabaseUrl, serviceKey);
   const { data: roleData } = await adminClient
-    .from("user_roles")
-    .select("role")
-    .eq("user_id", user.id)
-    .eq("role", "admin")
-    .maybeSingle();
-
+    .from("user_roles").select("role").eq("user_id", user.id).eq("role", "admin").maybeSingle();
   if (!roleData) {
     return new Response(JSON.stringify({ error: "Forbidden" }), {
-      status: 403,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 
   const body = await req.json();
-  const content: string = body?.content;
-  if (!content || typeof content !== "string") {
-    return new Response(JSON.stringify({ error: "content is required" }), {
-      status: 400,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+  const csv: string = body?.csv ?? "";
+  const sourceLabel: string = body?.source_label ?? "csv";
+
+  if (!csv.trim()) {
+    return new Response(JSON.stringify({ error: "csv is required" }), {
+      status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 
-  // Ensure a sync_status row exists and mark syncing
-  const { data: existingStatus } = await adminClient
-    .from("sync_status")
-    .select("id")
-    .maybeSingle();
-
+  // Ensure sync_status row exists
+  const { data: existingStatus } = await adminClient.from("sync_status").select("id").maybeSingle();
   let statusId: string;
   if (existingStatus) {
     statusId = existingStatus.id;
-    await adminClient
-      .from("sync_status")
-      .update({ status: "syncing", error_message: null })
-      .eq("id", statusId);
+    await adminClient.from("sync_status").update({ status: "syncing", error_message: null }).eq("id", statusId);
   } else {
-    const { data: newStatus } = await adminClient
-      .from("sync_status")
-      .insert({ status: "syncing", error_message: null })
-      .select("id")
-      .single();
-    statusId = newStatus!.id;
+    const { data: ns } = await adminClient.from("sync_status")
+      .insert({ status: "syncing", error_message: null }).select("id").single();
+    statusId = ns!.id;
   }
 
   try {
-    const DOC_ID = "manual-kb";
+    const rows = parseCsv(csv);
+    if (rows.length < 2) throw new Error("CSV must have at least a header row and one data row.");
 
-    // Delete old chunks for this doc
+    const headers = rows[0];
+    const dataRows = rows.slice(1);
+    const DOC_ID = "csv-kb";
+
+    // Delete previous chunks for this source
     await adminClient.from("rag_chunks").delete().eq("doc_id", DOC_ID);
 
-    const chunks = chunkText(content);
+    let indexed = 0;
+    for (let i = 0; i < dataRows.length; i++) {
+      const row = dataRows[i];
+      // Skip completely empty rows
+      if (row.every((v) => !v)) continue;
 
-    for (let i = 0; i < chunks.length; i++) {
-      const embedding = await embed(chunks[i], lovableApiKey);
-      const { error } = await adminClient.from("rag_chunks").insert({
+      // Build text: "Header: Value; Header: Value; …"
+      const text = headers
+        .map((h, ci) => `${h}: ${row[ci] ?? ""}`)
+        .filter((pair) => !pair.endsWith(": "))
+        .join("; ");
+
+      if (!text.trim()) continue;
+
+      const embedding = await embed(text, lovableKey);
+
+      const { error: insertErr } = await adminClient.from("rag_chunks").insert({
         doc_id: DOC_ID,
         chunk_index: i,
-        content: chunks[i],
+        content: text,
         embedding: `[${embedding.join(",")}]`,
-        token_count: Math.ceil(chunks[i].length / 4),
-        metadata: { source: "manual-kb", chunk_index: i },
+        token_count: Math.ceil(text.length / 4),
+        metadata: {
+          source: sourceLabel,
+          row_number: i + 2, // 1-based, +1 for header row
+          headers,
+        },
       });
-      if (error) throw new Error(error.message);
+      if (insertErr) throw new Error(insertErr.message);
+      indexed++;
     }
 
-    // Mark done
-    await adminClient
-      .from("sync_status")
-      .update({
-        status: "done",
-        chunk_count: chunks.length,
-        last_synced_at: new Date().toISOString(),
-        doc_title: "Knowledge Base",
-        error_message: null,
-      })
-      .eq("id", statusId);
+    await adminClient.from("sync_status").update({
+      status: "done",
+      chunk_count: indexed,
+      last_synced_at: new Date().toISOString(),
+      doc_title: sourceLabel,
+      error_message: null,
+    }).eq("id", statusId);
 
-    return new Response(JSON.stringify({ chunk_count: chunks.length }), {
+    return new Response(JSON.stringify({ chunk_count: indexed, row_count: dataRows.length }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown error";
-    await adminClient
-      .from("sync_status")
-      .update({ status: "error", error_message: msg })
-      .eq("id", statusId);
-
+    await adminClient.from("sync_status").update({ status: "error", error_message: msg }).eq("id", statusId);
     return new Response(JSON.stringify({ error: msg }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 });
