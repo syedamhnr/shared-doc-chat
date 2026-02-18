@@ -438,17 +438,26 @@ function MessageBubble({
           </span>
         </div>
 
-        {/* Citations */}
-        {!isUser && message.citations.length > 0 && (
-          <div className="w-full space-y-1 px-1">
-            <p className="px-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-              Retrieved rows
-            </p>
-            {message.citations.map((c, i) => (
-              <CitationCard key={c.chunk_id ?? i} citation={c} onPreview={onPreview} />
-            ))}
-          </div>
-        )}
+        {/* Citations — only show rows actually referenced in the content */}
+        {!isUser && (() => {
+          const referencedRows = new Set(
+            [...message.content.matchAll(/\[Row (\d+)\]/g)].map((m) => parseInt(m[1], 10))
+          );
+          const cited = message.citations.filter(
+            (c) => c.row_number !== undefined && referencedRows.has(c.row_number)
+          );
+          if (cited.length === 0) return null;
+          return (
+            <div className="w-full space-y-1 px-1">
+              <p className="px-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                Retrieved rows
+              </p>
+              {cited.map((c, i) => (
+                <CitationCard key={c.chunk_id ?? i} citation={c} onPreview={onPreview} />
+              ))}
+            </div>
+          );
+        })()}
       </div>
     </div>
   );
@@ -534,17 +543,26 @@ export function MessageList({
                   )}
                 </div>
 
-                {/* Citations preview while streaming */}
-                {streamingCitations.length > 0 && (
-                  <div className="w-full space-y-1 px-1">
-                    <p className="px-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                      Retrieved rows
-                    </p>
-                    {streamingCitations.map((c, i) => (
-                      <CitationCard key={c.chunk_id ?? i} citation={c} onPreview={setPreviewCitation} />
-                    ))}
-                  </div>
-                )}
+                {/* Citations preview while streaming — only cited rows */}
+                {(() => {
+                  const referencedRows = new Set(
+                    [...streamingContent.matchAll(/\[Row (\d+)\]/g)].map((m) => parseInt(m[1], 10))
+                  );
+                  const cited = streamingCitations.filter(
+                    (c) => c.row_number !== undefined && referencedRows.has(c.row_number)
+                  );
+                  if (cited.length === 0) return null;
+                  return (
+                    <div className="w-full space-y-1 px-1">
+                      <p className="px-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                        Retrieved rows
+                      </p>
+                      {cited.map((c, i) => (
+                        <CitationCard key={c.chunk_id ?? i} citation={c} onPreview={setPreviewCitation} />
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           )}
