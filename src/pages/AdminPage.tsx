@@ -3,9 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import {
   ArrowLeft,
@@ -14,10 +14,9 @@ import {
   XCircle,
   Clock,
   AlertTriangle,
-  ExternalLink,
   Loader2,
   ShieldCheck,
-  Link2,
+  Database,
 } from "lucide-react";
 
 interface SyncStatus {
@@ -35,72 +34,33 @@ export default function AdminPage() {
   const { toast } = useToast();
 
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
-  const [googleConnected, setGoogleConnected] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [docUrl, setDocUrl] = useState("");
-  const [connecting, setConnecting] = useState(false);
+  const [kbContent, setKbContent] = useState("");
+  const [charCount, setCharCount] = useState(0);
 
   const fetchStatus = async () => {
     const { data } = await supabase.from("sync_status").select("*").single();
     if (data) setSyncStatus(data as SyncStatus);
-
-    const { data: token } = await supabase
-      .from("google_tokens")
-      .select("id")
-      .maybeSingle();
-    setGoogleConnected(!!token);
   };
 
   useEffect(() => {
     if (!isAdmin) { navigate("/"); return; }
     fetchStatus();
 
-    // Realtime sync_status updates
     const channel = supabase
       .channel("sync-status-admin")
       .on("postgres_changes", { event: "*", schema: "public", table: "sync_status" }, fetchStatus)
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin]);
 
-  const handleConnectGoogle = async () => {
-    if (!docUrl.trim()) {
-      toast({ title: "Enter a Google Doc URL first", variant: "destructive" });
+  const handleSync = async () => {
+    if (!kbContent.trim()) {
+      toast({ title: "Knowledge base content is empty", variant: "destructive" });
       return;
     }
-    setConnecting(true);
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/google-oauth-init`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${session?.access_token}`,
-          },
-          body: JSON.stringify({ doc_url: docUrl }),
-        }
-      );
-      if (!res.ok) throw new Error("Failed to start OAuth flow");
-      const { auth_url } = await res.json();
-      window.location.href = auth_url;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Error";
-      // Friendly message if function not yet deployed
-      toast({
-        title: "Google OAuth not yet configured",
-        description: "Deploy the google-oauth-init edge function to enable this. " + msg,
-        variant: "destructive",
-      });
-    } finally {
-      setConnecting(false);
-    }
-  };
-
-  const handleSyncNow = async () => {
     setSyncing(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -112,6 +72,7 @@ export default function AdminPage() {
             "Content-Type": "application/json",
             Authorization: `Bearer ${session?.access_token}`,
           },
+          body: JSON.stringify({ content: kbContent }),
         }
       );
       if (!res.ok) {
@@ -149,7 +110,7 @@ export default function AdminPage() {
     <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="border-b border-border bg-card px-6 py-4">
-        <div className="mx-auto flex max-w-2xl items-center gap-4">
+        <div className="mx-auto flex max-w-3xl items-center gap-4">
           <Button variant="ghost" size="icon" onClick={() => navigate("/")}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
@@ -160,38 +121,16 @@ export default function AdminPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-2xl space-y-6 px-6 py-8">
+      <main className="mx-auto max-w-3xl space-y-6 px-6 py-8">
 
-        {/* Sync Status Card */}
+        {/* Status Card */}
         <section className="rounded-2xl border border-border bg-card p-6 shadow-sm">
-          <h2 className="mb-4 text-base font-semibold">Knowledge Source Status</h2>
+          <h2 className="mb-4 text-base font-semibold">Knowledge Base Status</h2>
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">Sync status</span>
               <StatusBadge status={syncStatus?.status ?? "idle"} />
             </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">Google Drive</span>
-              <div className="flex items-center gap-1.5 text-sm">
-                {googleConnected ? (
-                  <>
-                  <CheckCircle2 className="h-4 w-4 text-primary" />
-                    <span className="text-primary">Connected</span>
-                  </>
-                ) : (
-                  <>
-                    <XCircle className="h-4 w-4 text-muted-foreground" />
-                    <span className="text-muted-foreground">Not connected</span>
-                  </>
-                )}
-              </div>
-            </div>
-            {syncStatus?.doc_title && (
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Document</span>
-                <span className="text-sm font-medium">{syncStatus.doc_title}</span>
-              </div>
-            )}
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">Indexed chunks</span>
               <span className="text-sm font-medium tabular-nums">{syncStatus?.chunk_count ?? 0}</span>
@@ -199,7 +138,7 @@ export default function AdminPage() {
             {syncStatus?.last_synced_at && (
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Last synced</span>
-                <span className="text-sm tabular-nums">
+                <span className="text-sm tabular-nums text-muted-foreground">
                   {new Date(syncStatus.last_synced_at).toLocaleString()}
                 </span>
               </div>
@@ -213,66 +152,55 @@ export default function AdminPage() {
           </div>
         </section>
 
-        {/* Connect Google Drive Card */}
+        {/* Knowledge Base Editor */}
         <section className="rounded-2xl border border-border bg-card p-6 shadow-sm">
           <div className="mb-1 flex items-center gap-2">
-            <Link2 className="h-5 w-5 text-primary" />
-            <h2 className="text-base font-semibold">Connect Google Drive</h2>
+            <Database className="h-5 w-5 text-primary" />
+            <h2 className="text-base font-semibold">Knowledge Base Content</h2>
           </div>
           <p className="mb-4 text-sm text-muted-foreground">
-            Paste the URL of the Google Doc that will serve as the shared knowledge source for all users.
+            Paste or type the content you want the AI to use when answering questions. Click <strong>Sync</strong> to index it.
           </p>
           <div className="space-y-3">
             <div className="space-y-1.5">
-              <Label htmlFor="docUrl">Google Doc URL</Label>
-              <Input
-                id="docUrl"
-                placeholder="https://docs.google.com/document/d/…"
-                value={docUrl}
-                onChange={(e) => setDocUrl(e.target.value)}
+              <div className="flex items-center justify-between">
+                <Label htmlFor="kbContent">Content</Label>
+                <span className="text-xs text-muted-foreground">{charCount.toLocaleString()} characters</span>
+              </div>
+              <Textarea
+                id="kbContent"
+                placeholder="Paste your knowledge base content here — FAQs, documentation, product info, etc."
+                value={kbContent}
+                onChange={(e) => {
+                  setKbContent(e.target.value);
+                  setCharCount(e.target.value.length);
+                }}
+                className="min-h-[320px] resize-y font-mono text-sm"
               />
             </div>
-            <div className="flex gap-3">
-              <Button
-                onClick={handleConnectGoogle}
-                disabled={connecting || !docUrl.trim()}
-                className="gap-2"
-              >
-                {connecting ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <ExternalLink className="h-4 w-4" />
-                )}
-                {googleConnected ? "Re-connect Google" : "Connect Google Drive"}
-              </Button>
-              {googleConnected && (
-                <Button
-                  variant="outline"
-                  onClick={handleSyncNow}
-                  disabled={syncing}
-                  className="gap-2"
-                >
-                  {syncing ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <RefreshCw className="h-4 w-4" />
-                  )}
-                  Sync Now
-                </Button>
+            <Button
+              onClick={handleSync}
+              disabled={syncing || !kbContent.trim()}
+              className="gap-2"
+            >
+              {syncing ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
               )}
-            </div>
+              {syncing ? "Syncing…" : "Sync Knowledge Base"}
+            </Button>
           </div>
         </section>
 
-        {/* Instructions */}
+        {/* How it works */}
         <section className="rounded-2xl border border-border bg-muted/40 p-6">
-          <h2 className="mb-3 text-base font-semibold">Setup Instructions</h2>
-          <ol className="space-y-2 text-sm text-muted-foreground list-decimal list-inside">
-            <li>Share your Google Doc with anyone with the link (View access).</li>
-            <li>Paste the Doc URL above and click <strong>Connect Google Drive</strong>.</li>
-            <li>Complete the OAuth consent screen — this grants read access for sync.</li>
-            <li>Click <strong>Sync Now</strong> to index the document. Users can then ask questions.</li>
-            <li>Re-sync any time you update the document.</li>
+          <h2 className="mb-3 text-base font-semibold">How it works</h2>
+          <ol className="list-decimal list-inside space-y-2 text-sm text-muted-foreground">
+            <li>Paste any text content — docs, FAQs, product info — into the editor above.</li>
+            <li>Click <strong>Sync Knowledge Base</strong>. The content is split into chunks and embedded.</li>
+            <li>When users ask questions, the AI retrieves the most relevant chunks and answers with citations.</li>
+            <li>Re-sync any time you update the content.</li>
           </ol>
         </section>
 
