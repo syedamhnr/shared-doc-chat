@@ -22,6 +22,9 @@ export interface Citation {
   chunk_id: string;
   chunk_index: number;
   excerpt: string;
+  row_number?: number;
+  reference?: number;
+  similarity?: number;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
