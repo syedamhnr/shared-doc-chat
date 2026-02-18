@@ -5,17 +5,6 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-async function embed(text: string, apiKey: string): Promise<number[]> {
-  const res = await fetch("https://ai.gateway.lovable.dev/v1/embeddings", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ model: "openai/text-embedding-3-small", input: text }),
-  });
-  if (!res.ok) throw new Error(`Embedding failed (${res.status}): ${await res.text()}`);
-  const { data } = await res.json();
-  return data[0].embedding as number[];
-}
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -51,24 +40,56 @@ Deno.serve(async (req) => {
   const adminClient = createClient(supabaseUrl, serviceKey);
 
   try {
-    // 1. Embed the question
-    const queryEmbedding = await embed(question, lovableKey);
+    // 1. Full-text keyword search: extract meaningful words from the question
+    //    and search against chunk content using ilike for each keyword
+    const keywords = question
+      .toLowerCase()
+      .replace(/[^\w\s]/g, " ")
+      .split(/\s+/)
+      .filter((w: string) => w.length > 2 && !["the","and","for","are","was","that","with","this","have","from","not","what","how","who","when","where","which"].includes(w));
 
-    // 2. Retrieve top-6 matching row chunks
-    const { data: chunks, error: matchErr } = await adminClient.rpc("match_chunks", {
-      query_embedding: `[${queryEmbedding.join(",")}]`,
-      match_threshold: 0.25,
-      match_count: 6,
-    });
-    if (matchErr) throw new Error(matchErr.message);
+    // Fetch chunks matching any keyword (union approach), limit to 6
+    type RagChunk = { id: string; chunk_index: number; content: string; metadata: Record<string, unknown> };
+    let chunks: RagChunk[] = [];
 
-    const hasContext = chunks && chunks.length > 0;
+    if (keywords.length > 0) {
+      // Build OR filter: content ilike any keyword
+      const filter = keywords.slice(0, 5).map((k: string) => `content.ilike.%${k}%`).join(",");
+      const { data, error } = await adminClient
+        .from("rag_chunks")
+        .select("id, chunk_index, content, metadata")
+        .eq("doc_id", "csv-kb")
+        .or(filter)
+        .limit(12);
 
-    // 3. Build context block with row numbers
-    type Chunk = { id: string; chunk_index: number; content: string; metadata: Record<string, unknown>; similarity: number };
+      if (error) throw new Error(error.message);
+
+      // Score by how many keywords match, take top 6
+      const scored = (data ?? []).map((c) => {
+        const lower = c.content.toLowerCase();
+        const score = keywords.filter((k: string) => lower.includes(k)).length;
+        return { ...c, score };
+      });
+      scored.sort((a, b) => b.score - a.score);
+      chunks = scored.slice(0, 6);
+    }
+
+    // Fallback: if no keyword matches, return first 6 chunks as context
+    if (chunks.length === 0) {
+      const { data } = await adminClient
+        .from("rag_chunks")
+        .select("id, chunk_index, content, metadata")
+        .eq("doc_id", "csv-kb")
+        .limit(6);
+      chunks = data ?? [];
+    }
+
+    const hasContext = chunks.length > 0;
+
+    // 2. Build context block with row numbers
     let contextBlock = "";
     if (hasContext) {
-      contextBlock = (chunks as Chunk[])
+      contextBlock = chunks
         .map((c) => {
           const rowNum = (c.metadata?.row_number as number | undefined) ?? c.chunk_index + 2;
           return `[Row ${rowNum}]\n${c.content}`;
@@ -76,12 +97,12 @@ Deno.serve(async (req) => {
         .join("\n\n");
     }
 
-    // 4. Prompt
+    // 3. Prompt
     const systemPrompt = hasContext
       ? `You are a precise data assistant. Answer the user's question using ONLY the data rows provided below.
-- Cite every row you use in the format [Row N] — e.g. "Alice is 30 years old [Row 2]."
+- Cite every row you use in the format [Row N] — e.g. "The value is X [Row 5]."
 - If multiple rows are relevant, cite all of them.
-- If the answer cannot be found in the provided rows, respond with: "I don't have that information in the current knowledge base."
+- If the answer cannot be found in the provided rows, say: "I don't have that information in the current knowledge base."
 - Never make up information.`
       : `You are a helpful assistant. No knowledge base has been synced yet. Let the user know they should ask the admin to upload a CSV first.`;
 
@@ -89,7 +110,7 @@ Deno.serve(async (req) => {
       ? `Data rows:\n${contextBlock}\n\nQuestion: ${question}`
       : question;
 
-    // 5. LLM call
+    // 4. LLM call
     const llmRes = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${lovableKey}` },
@@ -114,15 +135,14 @@ Deno.serve(async (req) => {
     const llmJson = await llmRes.json();
     const answer = llmJson.choices[0].message.content as string;
 
-    // 6. Build citation objects
+    // 5. Build citation objects
     const citations = hasContext
-      ? (chunks as Chunk[]).map((c, i) => ({
+      ? chunks.map((c, i) => ({
           chunk_id: c.id,
           chunk_index: c.chunk_index,
           excerpt: c.content.slice(0, 250),
           row_number: (c.metadata?.row_number as number | undefined) ?? c.chunk_index + 2,
           reference: i + 1,
-          similarity: Math.round(c.similarity * 100),
         }))
       : [];
 
