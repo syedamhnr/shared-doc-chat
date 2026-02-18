@@ -9,7 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 export default function ChatPage() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [isThinking, setIsThinking] = useState(false);
-  const { createConversation } = useConversations();
+  const { createConversation, refresh: refreshConversations } = useConversations();
   const { messages, addMessage } = useMessages(activeId);
   const { toast } = useToast();
 
@@ -34,7 +34,9 @@ export default function ChatPage() {
     // Optimistically add the user message (also sets title)
     // Pass convId directly to bypass stale React state in the hook
     const titleForConvo = text.length > 50 ? text.slice(0, 50) + "…" : text;
-    await addMessage("user", text, [], messages.length === 0 ? titleForConvo : undefined, convId);
+    const isFirstMessage = messages.length === 0;
+    await addMessage("user", text, [], isFirstMessage ? titleForConvo : undefined, convId);
+    if (isFirstMessage) refreshConversations();
 
     setIsThinking(true);
     try {
