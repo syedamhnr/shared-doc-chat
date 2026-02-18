@@ -1,46 +1,168 @@
 import { useEffect, useRef, useState } from "react";
 import { Message, Citation } from "@/hooks/useChat";
 import { cn } from "@/lib/utils";
-import { Bot, User, ChevronDown, ChevronUp, TableIcon, Copy, Check } from "lucide-react";
+import { Bot, User, ChevronDown, ChevronUp, TableIcon, Copy, Check, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import type { Components } from "react-markdown";
 
-interface CitationCardProps {
-  citation: Citation;
+// ── Row Preview Sheet ──────────────────────────────────────────────────────────
+
+/** Parse "Key: Value, Key2: Value2" excerpt into ordered pairs */
+function parseExcerpt(excerpt: string): Array<{ key: string; value: string }> {
+  // The edge function stores chunks as "column: value" lines separated by newlines or commas
+  // Try newline split first, fall back to comma split
+  const lines = excerpt.includes("\n")
+    ? excerpt.split("\n")
+    : excerpt.split(/,(?=\s*\w[^:]*:)/); // split on comma followed by "word:"
+
+  return lines
+    .map((line) => {
+      const colonIdx = line.indexOf(":");
+      if (colonIdx === -1) return null;
+      return {
+        key: line.slice(0, colonIdx).trim(),
+        value: line.slice(colonIdx + 1).trim(),
+      };
+    })
+    .filter((pair): pair is { key: string; value: string } => !!pair && pair.key.length > 0);
 }
 
-function CitationCard({ citation }: CitationCardProps) {
+interface RowPreviewSheetProps {
+  citation: Citation | null;
+  onClose: () => void;
+}
+
+function RowPreviewSheet({ citation, onClose }: RowPreviewSheetProps) {
+  if (!citation) return null;
+  const label = citation.row_number ? `Row ${citation.row_number}` : `Source ${citation.reference ?? ""}`;
+  const pairs = parseExcerpt(citation.excerpt);
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm"
+        onClick={onClose}
+      />
+      {/* Sheet */}
+      <div className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col border-l border-border bg-card shadow-xl animate-in slide-in-from-right duration-200">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+          <div className="flex items-center gap-2">
+            <TableIcon className="h-4 w-4 text-primary" />
+            <h2 className="text-sm font-semibold">{label}</h2>
+            {citation.similarity !== undefined && (
+              <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                {citation.similarity}% match
+              </span>
+            )}
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          {pairs.length > 0 ? (
+            <dl className="space-y-3">
+              {pairs.map(({ key, value }, i) => (
+                <div key={i} className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5">
+                  <dt className="mb-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    {key}
+                  </dt>
+                  <dd className="text-sm text-foreground break-words">
+                    {value || <span className="italic text-muted-foreground">—</span>}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          ) : (
+            // Fallback: show raw excerpt in a mono block
+            <pre className="rounded-lg border border-border bg-muted/30 p-3 text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap break-words">
+              {citation.excerpt}
+            </pre>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── Citation Card ─────────────────────────────────────────────────────────────
+
+interface CitationCardProps {
+  citation: Citation;
+  onPreview: (citation: Citation) => void;
+}
+
+function CitationCard({ citation, onPreview }: CitationCardProps) {
   const [open, setOpen] = useState(false);
   const label = citation.row_number ? `Row ${citation.row_number}` : `Source ${citation.reference ?? ""}`;
 
   return (
-    <button
-      onClick={() => setOpen((o) => !o)}
-      className="mt-1 flex w-full flex-col items-start rounded-lg border border-border/60 bg-muted/40 px-3 py-2 text-left text-xs transition-colors hover:bg-muted"
-    >
-      <div className="flex w-full items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5">
-          <TableIcon className="h-3 w-3 text-primary" />
-          <span className="font-semibold text-primary">{label}</span>
+    <div className="mt-1 rounded-lg border border-border/60 bg-muted/40 text-xs transition-colors hover:bg-muted">
+      {/* Main row: label + preview button + toggle */}
+      <div className="flex w-full items-center justify-between gap-2 px-3 py-2">
+        <button
+          onClick={() => onPreview(citation)}
+          className="flex items-center gap-1.5 text-left"
+        >
+          <TableIcon className="h-3 w-3 text-primary shrink-0" />
+          <span className="font-semibold text-primary hover:underline underline-offset-2">{label}</span>
           {citation.similarity !== undefined && (
             <span className="rounded bg-primary/10 px-1 py-0.5 text-[10px] text-primary">
               {citation.similarity}% match
             </span>
           )}
+        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => onPreview(citation)}
+            className="rounded px-1.5 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/10 transition-colors"
+          >
+            View data
+          </button>
+          <button
+            onClick={() => setOpen((o) => !o)}
+            className="text-muted-foreground hover:text-foreground"
+            title={open ? "Collapse" : "Expand excerpt"}
+          >
+            {open ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </button>
         </div>
-        {open ? <ChevronUp className="h-3 w-3 text-muted-foreground" /> : <ChevronDown className="h-3 w-3 text-muted-foreground" />}
       </div>
       {open && (
-        <p className="mt-2 font-mono text-[11px] leading-relaxed text-muted-foreground">{citation.excerpt}</p>
+        <p className="border-t border-border/40 px-3 pb-2 pt-1.5 font-mono text-[11px] leading-relaxed text-muted-foreground">
+          {citation.excerpt}
+        </p>
       )}
-    </button>
+    </div>
   );
 }
 
-function AssistantContent({ content }: { content: string }) {
+
+function AssistantContent({
+  content,
+  citations = [],
+  onPreview,
+}: {
+  content: string;
+  citations?: Citation[];
+  onPreview?: (c: Citation) => void;
+}) {
+  // Map row numbers to their citation objects for quick lookup
+  const citationByRow = new Map<number, Citation>();
+  citations.forEach((c) => {
+    if (c.row_number !== undefined) citationByRow.set(c.row_number, c);
+  });
+
   const components: Components = {
     // Paragraphs
     p({ children }) {
@@ -118,18 +240,30 @@ function AssistantContent({ content }: { content: string }) {
         </a>
       );
     },
-    // Inline code
+    // Inline code — handles citation pills AND fenced code blocks
     code({ className, children, ...props }) {
       const match = /language-(\w+)/.exec(className ?? "");
       const isBlock = Boolean(match);
       const codeString = String(children).replace(/\n$/, "");
 
-      // Citation pill: [Row N]
-      if (!isBlock && /^\[Row \d+\]$/.test(codeString)) {
+      // Clickable citation pill: [Row N]
+      const rowMatch = /^\[Row (\d+)\]$/.exec(codeString);
+      if (!isBlock && rowMatch) {
+        const rowNum = parseInt(rowMatch[1], 10);
+        const linkedCitation = citationByRow.get(rowNum);
+        const isClickable = Boolean(linkedCitation && onPreview);
         return (
-          <span className="rounded bg-primary/15 px-1 py-0.5 text-xs font-semibold text-primary">
+          <button
+            type="button"
+            onClick={isClickable ? () => onPreview!(linkedCitation!) : undefined}
+            className={cn(
+              "rounded bg-primary/15 px-1 py-0.5 text-xs font-semibold text-primary",
+              isClickable && "cursor-pointer hover:bg-primary/25 transition-colors underline underline-offset-2"
+            )}
+            title={isClickable ? `Preview ${codeString}` : undefined}
+          >
             {codeString}
-          </span>
+          </button>
         );
       }
 
@@ -174,7 +308,7 @@ function AssistantContent({ content }: { content: string }) {
     },
   };
 
-  // Pre-process: highlight [Row N] citations not wrapped in backticks
+  // Pre-process: wrap [Row N] citations so the code renderer catches them
   const processed = content.replace(/\[Row (\d+)\]/g, "`[Row $1]`");
 
   return (
@@ -238,7 +372,13 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function MessageBubble({ message }: { message: Message }) {
+function MessageBubble({
+  message,
+  onPreview,
+}: {
+  message: Message;
+  onPreview: (c: Citation) => void;
+}) {
   const isUser = message.role === "user";
 
   return (
@@ -269,7 +409,7 @@ function MessageBubble({ message }: { message: Message }) {
         >
           {isUser
             ? <p className="text-sm leading-relaxed">{message.content}</p>
-            : <AssistantContent content={message.content} />}
+            : <AssistantContent content={message.content} citations={message.citations} onPreview={onPreview} />}
         </div>
 
         {/* Bottom row: copy button (assistant only) + timestamp */}
@@ -287,7 +427,7 @@ function MessageBubble({ message }: { message: Message }) {
               Retrieved rows
             </p>
             {message.citations.map((c, i) => (
-              <CitationCard key={c.chunk_id ?? i} citation={c} />
+              <CitationCard key={c.chunk_id ?? i} citation={c} onPreview={onPreview} />
             ))}
           </div>
         )}
@@ -295,6 +435,7 @@ function MessageBubble({ message }: { message: Message }) {
     </div>
   );
 }
+
 
 interface MessageListProps {
   messages: Message[];
@@ -313,6 +454,7 @@ export function MessageList({
   isStreaming = false,
 }: MessageListProps) {
   const endRef = useRef<HTMLDivElement>(null);
+  const [previewCitation, setPreviewCitation] = useState<Citation | null>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -321,90 +463,99 @@ export function MessageList({
   const showEmpty = messages.length === 0 && !isThinking && !isStreaming;
 
   return (
-    <div className="chat-scroll flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-2xl space-y-6 px-4 py-8">
-        {showEmpty && (
-          <div className="flex flex-col items-center justify-center py-24 text-center">
-            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
-              <Bot className="h-8 w-8 text-primary" />
-            </div>
-            <h2 className="text-xl font-semibold text-foreground">How can I help?</h2>
-            <p className="mt-2 max-w-sm text-sm text-muted-foreground">
-              Ask any question about your data. I'll retrieve the most relevant rows and answer with citations.
-            </p>
-          </div>
-        )}
+    <>
+      <RowPreviewSheet citation={previewCitation} onClose={() => setPreviewCitation(null)} />
 
-        {messages.map((m) => (
-          <MessageBubble key={m.id} message={m} />
-        ))}
-
-        {/* Live streaming bubble */}
-        {isStreaming && (
-          <div className="group flex gap-3">
-            <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-card">
-              <Bot className="h-4 w-4 text-foreground" />
+      <div className="chat-scroll flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-2xl space-y-6 px-4 py-8">
+          {showEmpty && (
+            <div className="flex flex-col items-center justify-center py-24 text-center">
+              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
+                <Bot className="h-8 w-8 text-primary" />
+              </div>
+              <h2 className="text-xl font-semibold text-foreground">How can I help?</h2>
+              <p className="mt-2 max-w-sm text-sm text-muted-foreground">
+                Ask any question about your data. I'll retrieve the most relevant rows and answer with citations.
+              </p>
             </div>
-            <div className="flex max-w-[78%] flex-col gap-1">
-              <div className="rounded-2xl rounded-tl-sm border border-border bg-card px-4 py-3 text-card-foreground">
-                {streamingContent ? (
-                  <>
-                    <AssistantContent content={streamingContent} />
-                    {/* Blinking cursor */}
-                    <span className="inline-block h-4 w-0.5 translate-y-0.5 animate-pulse bg-foreground/60 ml-0.5" />
-                  </>
-                ) : (
-                  /* Thinking dots while waiting for first token */
-                  <div className="flex h-5 items-center gap-1.5">
-                    {[0, 1, 2].map((i) => (
-                      <span
-                        key={i}
-                        className="h-2 w-2 rounded-full bg-muted-foreground/50 animate-bounce"
-                        style={{ animationDelay: `${i * 0.15}s` }}
+          )}
+
+          {messages.map((m) => (
+            <MessageBubble key={m.id} message={m} onPreview={setPreviewCitation} />
+          ))}
+
+          {/* Live streaming bubble */}
+          {isStreaming && (
+            <div className="group flex gap-3">
+              <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-card">
+                <Bot className="h-4 w-4 text-foreground" />
+              </div>
+              <div className="flex max-w-[78%] flex-col gap-1">
+                <div className="rounded-2xl rounded-tl-sm border border-border bg-card px-4 py-3 text-card-foreground">
+                  {streamingContent ? (
+                    <>
+                      <AssistantContent
+                        content={streamingContent}
+                        citations={streamingCitations}
+                        onPreview={setPreviewCitation}
                       />
+                      {/* Blinking cursor */}
+                      <span className="inline-block h-4 w-0.5 translate-y-0.5 animate-pulse bg-foreground/60 ml-0.5" />
+                    </>
+                  ) : (
+                    /* Thinking dots while waiting for first token */
+                    <div className="flex h-5 items-center gap-1.5">
+                      {[0, 1, 2].map((i) => (
+                        <span
+                          key={i}
+                          className="h-2 w-2 rounded-full bg-muted-foreground/50 animate-bounce"
+                          style={{ animationDelay: `${i * 0.15}s` }}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Citations preview while streaming */}
+                {streamingCitations.length > 0 && (
+                  <div className="w-full space-y-1 px-1">
+                    <p className="px-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                      Retrieved rows
+                    </p>
+                    {streamingCitations.map((c, i) => (
+                      <CitationCard key={c.chunk_id ?? i} citation={c} onPreview={setPreviewCitation} />
                     ))}
                   </div>
                 )}
               </div>
+            </div>
+          )}
 
-              {/* Citations preview while streaming */}
-              {streamingCitations.length > 0 && (
-                <div className="w-full space-y-1 px-1">
-                  <p className="px-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                    Retrieved rows
-                  </p>
-                  {streamingCitations.map((c, i) => (
-                    <CitationCard key={c.chunk_id ?? i} citation={c} />
+          {/* Legacy thinking indicator */}
+          {isThinking && !isStreaming && (
+            <div className="flex gap-3">
+              <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-card">
+                <Bot className="h-4 w-4 text-foreground" />
+              </div>
+              <div className="rounded-2xl rounded-tl-sm border border-border bg-card px-4 py-3">
+                <div className="flex h-5 items-center gap-1.5">
+                  {[0, 1, 2].map((i) => (
+                    <span
+                      key={i}
+                      className="h-2 w-2 rounded-full bg-muted-foreground/50 animate-bounce"
+                      style={{ animationDelay: `${i * 0.15}s` }}
+                    />
                   ))}
                 </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Legacy thinking indicator (kept for safety) */}
-        {isThinking && !isStreaming && (
-          <div className="flex gap-3">
-            <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-card">
-              <Bot className="h-4 w-4 text-foreground" />
-            </div>
-            <div className="rounded-2xl rounded-tl-sm border border-border bg-card px-4 py-3">
-              <div className="flex h-5 items-center gap-1.5">
-                {[0, 1, 2].map((i) => (
-                  <span
-                    key={i}
-                    className="h-2 w-2 rounded-full bg-muted-foreground/50 animate-bounce"
-                    style={{ animationDelay: `${i * 0.15}s` }}
-                  />
-                ))}
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        <div ref={endRef} />
+          <div ref={endRef} />
+        </div>
       </div>
-    </div>
+    </>
   );
 }
+
 
