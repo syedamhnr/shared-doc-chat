@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import { UserManagement } from "@/components/admin/UserManagement";
 import {
   ArrowLeft,
   RefreshCw,
@@ -320,6 +321,9 @@ export default function AdminPage() {
             {syncing ? "Syncing…" : "Sync Now"}
           </Button>
         </section>
+
+        {/* User Management */}
+        <UserManagement />
 
         {/* How it works */}
         <section className="rounded-2xl border border-border bg-muted/40 p-6">
