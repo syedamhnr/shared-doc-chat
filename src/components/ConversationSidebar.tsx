@@ -16,6 +16,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -28,6 +29,7 @@ import {
   User,
   Search,
   X,
+  Pencil,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -43,9 +45,11 @@ export function ConversationSidebar({
   onNewConversation,
 }: ConversationSidebarProps) {
   const { user, isAdmin, signOut } = useAuth();
-  const { conversations, deleteConversation } = useConversations();
+  const { conversations, deleteConversation, renameConversation } = useConversations();
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
 
   const filtered = search.trim()
     ? conversations.filter((c) =>
@@ -71,6 +75,17 @@ export function ConversationSidebar({
 
   const { today, week, older } = groupByDate(filtered);
 
+  const startRename = (c: Conversation) => {
+    setRenamingId(c.id);
+    setRenameValue(c.title ?? "");
+  };
+
+  const commitRename = async (id: string) => {
+    const trimmed = renameValue.trim();
+    if (trimmed) await renameConversation(id, trimmed);
+    setRenamingId(null);
+  };
+
   const ConvoGroup = ({ label, items }: { label: string; items: Conversation[] }) => {
     if (!items.length) return null;
     return (
@@ -81,7 +96,7 @@ export function ConversationSidebar({
         {items.map((c) => (
           <SidebarMenuItem key={c.id} className="group/item list-none">
             <SidebarMenuButton
-              onClick={() => onSelectConversation(c.id)}
+              onClick={() => renamingId !== c.id && onSelectConversation(c.id)}
               className={cn(
                 "w-full justify-between rounded-lg px-3 py-2 text-sm",
                 activeConversationId === c.id
@@ -89,26 +104,55 @@ export function ConversationSidebar({
                   : "text-sidebar-foreground hover:bg-sidebar-accent/60"
               )}
             >
-              <div className="flex min-w-0 items-center gap-2">
+              <div className="flex min-w-0 flex-1 items-center gap-2">
                 <MessageSquare className="h-3.5 w-3.5 shrink-0 opacity-60" />
-                <span className="truncate">{c.title}</span>
+                {renamingId === c.id ? (
+                  <input
+                    autoFocus
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onBlur={() => commitRename(c.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") commitRename(c.id);
+                      if (e.key === "Escape") setRenamingId(null);
+                      e.stopPropagation();
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    className="min-w-0 flex-1 bg-sidebar-accent rounded px-1 py-0.5 text-sm text-sidebar-foreground outline-none ring-1 ring-sidebar-primary"
+                  />
+                ) : (
+                  <span className="truncate">{c.title}</span>
+                )}
               </div>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                  <button className="ml-1 hidden shrink-0 rounded p-0.5 hover:bg-sidebar-border group-hover/item:flex">
-                    <MoreHorizontal className="h-3.5 w-3.5" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" side="right" className="w-40">
-                  <DropdownMenuItem
-                    className="text-destructive focus:text-destructive"
-                    onClick={() => deleteConversation(c.id)}
+              {renamingId !== c.id && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                    <button className="ml-1 hidden shrink-0 rounded p-0.5 hover:bg-sidebar-border group-hover/item:flex">
+                      <MoreHorizontal className="h-3.5 w-3.5" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    align="end"
+                    side="right"
+                    className="w-40 z-50 bg-popover border border-border shadow-md"
                   >
-                    <Trash2 className="mr-2 h-3.5 w-3.5" />
-                    Delete
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+                    <DropdownMenuItem
+                      onClick={(e) => { e.stopPropagation(); startRename(c); }}
+                    >
+                      <Pencil className="mr-2 h-3.5 w-3.5" />
+                      Rename
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      className="text-destructive focus:text-destructive"
+                      onClick={(e) => { e.stopPropagation(); deleteConversation(c.id); }}
+                    >
+                      <Trash2 className="mr-2 h-3.5 w-3.5" />
+                      Delete
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
             </SidebarMenuButton>
           </SidebarMenuItem>
         ))}
