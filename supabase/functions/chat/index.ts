@@ -109,7 +109,7 @@ Deno.serve(async (req) => {
       ? `Data rows:\n${contextBlock}\n\nQuestion: ${question}`
       : question;
 
-    // ── 3. Citations (pre-built, sent in the SSE preamble) ─────────────────────
+    // ── 3. Citations metadata ──────────────────────────────────────────────────
     const citations = hasContext
       ? chunks.map((c, i) => ({
           chunk_id: c.id,
@@ -120,7 +120,7 @@ Deno.serve(async (req) => {
         }))
       : [];
 
-    // ── 4. Stream from LLM ─────────────────────────────────────────────────────
+    // ── 4. Call LLM with streaming ─────────────────────────────────────────────
     const llmRes = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${lovableKey}` },
@@ -151,74 +151,83 @@ Deno.serve(async (req) => {
       throw new Error(`LLM error (${status}): ${await llmRes.text()}`);
     }
 
-    // ── 5. Pipe SSE through a TransformStream, collect full answer, then persist ─
+    // ── 5. Collect full answer first, then stream back ─────────────────────────
+    // Read the entire LLM stream synchronously so we can persist before responding.
+    const llmReader = llmRes.body!.getReader();
+    const dec = new TextDecoder();
+    let rawBuffer = "";
     let fullAnswer = "";
 
-    const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
-    const writer = writable.getWriter();
+    while (true) {
+      const { done, value } = await llmReader.read();
+      if (done) break;
+      rawBuffer += dec.decode(value, { stream: true });
+
+      let nl: number;
+      while ((nl = rawBuffer.indexOf("\n")) !== -1) {
+        let line = rawBuffer.slice(0, nl);
+        rawBuffer = rawBuffer.slice(nl + 1);
+        if (line.endsWith("\r")) line = line.slice(0, -1);
+        if (!line.startsWith("data: ") || line === "data: [DONE]") continue;
+        try {
+          const parsed = JSON.parse(line.slice(6));
+          const delta = parsed.choices?.[0]?.delta?.content as string | undefined;
+          if (delta) fullAnswer += delta;
+        } catch { /* partial JSON */ }
+      }
+    }
+
+    // ── 6. Persist the assistant message ──────────────────────────────────────
+    if (conversation_id && user?.id && fullAnswer) {
+      await adminClient.from("messages").insert({
+        conversation_id,
+        user_id: user.id,
+        role: "assistant",
+        content: fullAnswer,
+        citations,
+      });
+    }
+
+    // ── 7. Stream the answer back as SSE so the client renders tokens live ─────
+    // We simulate streaming from the collected answer by chunking it in 6-char pieces.
     const encoder = new TextEncoder();
 
-    // Send citations as the very first SSE event so the client can display them
-    // before any tokens arrive.
-    const citationsEvent = `event: citations\ndata: ${JSON.stringify(citations)}\n\n`;
-    await writer.write(encoder.encode(citationsEvent));
+    // Send citations event first
+    const citationsLine = `event: citations\ndata: ${JSON.stringify(citations)}\n\n`;
 
-    // Read the upstream LLM stream, forward each line, and accumulate the answer.
-    (async () => {
-      try {
-        const reader = llmRes.body!.getReader();
-        const decoder = new TextDecoder();
-        let textBuffer = "";
+    // Chunk the answer into small pieces to simulate streaming
+    const chunkSize = 6;
+    const answerChunks: string[] = [];
+    for (let i = 0; i < fullAnswer.length; i += chunkSize) {
+      answerChunks.push(fullAnswer.slice(i, i + chunkSize));
+    }
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          textBuffer += decoder.decode(value, { stream: true });
+    const stream = new ReadableStream({
+      async start(controller) {
+        // Send citations preamble
+        controller.enqueue(encoder.encode(citationsLine));
 
-          let newlineIdx: number;
-          while ((newlineIdx = textBuffer.indexOf("\n")) !== -1) {
-            let line = textBuffer.slice(0, newlineIdx);
-            textBuffer = textBuffer.slice(newlineIdx + 1);
-            if (line.endsWith("\r")) line = line.slice(0, -1);
-
-            // Forward the raw line to the client
-            await writer.write(encoder.encode(line + "\n"));
-
-            // Also accumulate the answer text
-            if (line.startsWith("data: ") && line !== "data: [DONE]") {
-              try {
-                const parsed = JSON.parse(line.slice(6));
-                const delta = parsed.choices?.[0]?.delta?.content as string | undefined;
-                if (delta) fullAnswer += delta;
-              } catch { /* partial JSON – skip */ }
-            }
-          }
+        // Stream answer chunks
+        for (const chunk of answerChunks) {
+          const payload = JSON.stringify({ choices: [{ delta: { content: chunk } }] });
+          controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
+          // Small delay to make streaming visible in the UI
+          await new Promise((r) => setTimeout(r, 8));
         }
 
-        // Flush remaining buffer
-        if (textBuffer.trim()) {
-          await writer.write(encoder.encode(textBuffer + "\n"));
-        }
+        // SSE done signal
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller.close();
+      },
+    });
 
-        // ── 6. Persist the completed assistant message to DB ─────────────────
-        if (conversation_id && user?.id && fullAnswer) {
-          await adminClient.from("messages").insert({
-            conversation_id,
-            user_id: user.id,
-            role: "assistant",
-            content: fullAnswer,
-            citations,
-          });
-        }
-      } catch (e) {
-        console.error("stream error:", e);
-      } finally {
-        await writer.close();
-      }
-    })();
-
-    return new Response(readable, {
-      headers: { ...corsHeaders, "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+    return new Response(stream, {
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "X-Content-Type-Options": "nosniff",
+      },
     });
 
   } catch (err) {

@@ -10,24 +10,36 @@ import type { Components } from "react-markdown";
 
 // ── Row Preview Sheet ──────────────────────────────────────────────────────────
 
-/** Parse "Key: Value, Key2: Value2" excerpt into ordered pairs */
+/**
+ * Parse a CSV-row excerpt into ordered key/value pairs.
+ * Handles multiple formats:
+ *   - Newline-separated:  "Key: Value\nKey2: Value2"
+ *   - Semicolon-separated: "Key: Value; Key2: Value2"
+ *   - Comma-separated:    "Key: Value, Key2: Value2"
+ */
 function parseExcerpt(excerpt: string): Array<{ key: string; value: string }> {
-  // The edge function stores chunks as "column: value" lines separated by newlines or commas
-  // Try newline split first, fall back to comma split
-  const lines = excerpt.includes("\n")
-    ? excerpt.split("\n")
-    : excerpt.split(/,(?=\s*\w[^:]*:)/); // split on comma followed by "word:"
+  // Determine the delimiter: prefer newline, then semicolons, then commas
+  let segments: string[];
+  if (excerpt.includes("\n")) {
+    segments = excerpt.split("\n");
+  } else if (/;\s*\w[^:]*:/.test(excerpt)) {
+    // Semicolon-separated "Key: Value; Key2: Value2"
+    segments = excerpt.split(";");
+  } else {
+    // Comma-separated — only split on commas followed by a "Word:"
+    segments = excerpt.split(/,(?=\s*[A-Za-z][^:]*:)/);
+  }
 
-  return lines
-    .map((line) => {
-      const colonIdx = line.indexOf(":");
+  return segments
+    .map((seg) => {
+      const colonIdx = seg.indexOf(":");
       if (colonIdx === -1) return null;
-      return {
-        key: line.slice(0, colonIdx).trim(),
-        value: line.slice(colonIdx + 1).trim(),
-      };
+      const key = seg.slice(0, colonIdx).trim();
+      const value = seg.slice(colonIdx + 1).trim();
+      if (!key) return null;
+      return { key, value };
     })
-    .filter((pair): pair is { key: string; value: string } => !!pair && pair.key.length > 0);
+    .filter((pair): pair is { key: string; value: string } => pair !== null);
 }
 
 interface RowPreviewSheetProps {
